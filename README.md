@@ -1,83 +1,84 @@
-# wb2api 自动模型轮换 / 降级编排
+# workbuddy2api-rotation（增强版 · auto 模型自动轮换/降级编排）
 
-> 配套 [Sliverkiss/workbuddy2api](https://github.com/Sliverkiss/workbuddy2api)（MIT）的 `auto` 虚拟模型能力，
-> 把「优惠到期到点切换」和「额度耗尽自动降级」做成可复用的编排脚本。
-> 同样适用于其面板分支 [linguo2625469/workbuddy2api-panel](https://github.com/linguo2625469/workbuddy2api-panel)。
+> ⚠️ **这是一个在 workbuddy2api 基础上自行 patch 的增强版**，不是原版上游。
+> 它在原版之上加了一层「auto 虚拟模型自动调度」能力（昼夜主模型切换 + 请求级降级链 + GLM 空回复补丁）。
+> 原版上游**没有** `auto_model` / `model_fallback` 这两个配置段（未知键会被静默忽略）。
 
-## 它解决什么
+---
 
-wb2api 自带 `auto` 虚拟模型：一个 alias，后端按规则解析到真实模型。本仓库在它之上加了**两层轮换**：
+## 上游引用（致谢）
 
-1. **请求级兜底（用完自动切换）** —— `model_fallback`
-   某真实模型被限流（HTTP 6004 软限流）或额度耗尽（402）时，wb2api 自动把请求重写到链上下一档并重试。
-   配置在 `config.json` 的 `model_fallback`。
+本仓库基于以下两个上游项目，感谢作者们的维护：
 
-2. **时间级主模型切换（到点自动切换）** —— `auto_model.day_primary`
-   `auto` 按北京时间在「日间主模型 / 夜间主模型」之间切换（例如夜间老用户免费窗口用 `cn:hy4-preview`）。
-   优惠到期时，用定时任务（cron / WorkBuddy 自动化）重写 `day_primary`，实现「到点切到下一档」。
+- **上游核心**：[Sliverkiss/workbuddy2api](https://github.com/Sliverkiss/workbuddy2api)（MIT）—— wb2api 本体，账号池轮换、成本账本、`/v1/models` 实时 `credits` 透出等均来自此处。
+- **面板分支**：[linguo2625469/workbuddy2api-panel](https://github.com/linguo2625469/workbuddy2api-panel)（MIT）—— 带 Web 面板的部署形态，本仓库部署即基于此分支。
 
-> **原则：优惠到期 ≠ 抛弃。** 仍比原价便宜的模型留在链里；切换脚本读实时 `credits` 倍率，绝不臆测未来定价。
+**版本基准**：面板分支 `v1.10.0`（2026-09-16，已同步上游至 commit `76bb543`） + 本仓库自加 patch。
+（wb2api 上游无 release tag，按 commit 跟踪；本文档 patch 于 2026-09-17 在 NAS 上重建镜像生效。）
+
+**特别感谢**：上游在 Issue 反馈中确认了 GLM 空回复的行为面，并表示会在文档与注入策略上跟进修复；同时对「读实时 `credits` 排序、把降级链放在下游」的思路表示认同。本仓库即这一思路的下游实践实现。🙏
+
+---
+
+## 本增强版相对原版增加了什么
+
+| 能力 | 原版上游 | 本增强版 |
+|---|---|---|
+| `auto` 虚拟模型 | ❌ 无 | ✅ 有（`auto_model` 昼夜主模型切换） |
+| 请求级降级链 `model_fallback` | ❌ 无（限流走账号轮换） | ✅ 有（被限流/额度耗尽自动掉下一档） |
+| GLM 空回复修复 | 仅 deepseek 系 thinking 注入 | ✅ 对 `glm-5.3-flash` 注入 `reasoning_effort=low` |
+| 账号池 / 成本账本 / 实时 credits | ✅ 原生 | ✅ 原生（未改动） |
+
+> 上游的定位是「做好 chat 出口，fallback 留给下游」——这是合理的架构选择。本仓库是把"降级链"这一层**显式实现在下游（NAS 本地编排脚本）**，作为上游思路的落地参考。
+
+---
+
+## 两层轮换
+
+1. **请求级兜底（`model_fallback`）—— 用完自动切换**
+   某真实模型被软限流（HTTP 6004）/ 额度耗尽（402）时，自动把请求重写到链上下一档并重试。
+
+2. **时间级主模型切换（`auto_model.day_primary`）—— 到点自动切换**
+   按北京时间在「日间主模型 / 夜间主模型」间切换（夜间老用户免费窗口用 `cn:hy4-preview`）。
+   优惠到期时，用 cron / 系统定时任务触发 `deadline_switch.py` 重写 `day_primary`。
+
+### 原则
+- **优惠到期 ≠ 抛弃**：仍比原价便宜的模型留在链里。
+- **不臆测未来定价**：脚本读 `/v1/models` 实时 `credits` 倍率来重排。
+
+---
+
+## 使用的模型与版本（参考）
+
+以下为本人实际接入并编排的模型（经 WorkBuddy 账号目录，`/v1/models` 透出的 `credits` 倍率，2026-09 实测）：
+
+| 型号（model id） | credits 倍率 | 角色 | 说明 |
+|---|---|---|---|
+| `cn:hy3` | x0.00（免费） | 日间主模型 | 日间主力，薅免费额度 |
+| `cn:deepseek-v4.1-flash` | x0.03 | 降级档 1 | 最便宜的付费档 |
+| `cn:glm-5.3-flash` | x0.06 | 降级档 2 | 1M 上下文、支持看图/看视频 |
+| `cn:hy3-x` | x0.05 | 兜底 | 链末兜底 |
+| `cn:hy4-preview` | 夜间免费（日间 x0.29） | 夜间主模型 | 23:00–08:00 免费窗口 |
+
+**轮换链**：日间 `hy3 → deepseek → glm-5.3-flash → hy3-x`；夜间 `hy4-preview`（同级降级同日间链）。
+
+> 倍率会随优惠窗口波动，以 `/v1/models` 实时返回为准；本表仅作参考快照。
+> 更完整的型号/版本清单见分支 [`models-reference`](../../tree/models-reference)。
+
+---
 
 ## 快速开始
 
-1. 部署 workbuddy2api（见上游 README），确保 `/v1/models` 返回各模型 `credits` 倍率。
-2. 把 `examples/config.auto.json` 的 `auto_model` + `model_fallback` 两段并入你的 `config.json`，重启。
-3. （可选）用 `deadline_switch.py` 在优惠到期日自动重排日间链：
+1. 部署 workbuddy2api（建议基于面板分支，见上游引用）。
+2. 把本仓库的 `auto_model` + `model_fallback` 两段（需自行 patch 源码支持，或仅作下游编排参考）并入 `config.json`。
+3. 用 `deadline_switch.py` 在优惠到期日自动重排日间链（详见脚本内 `--simulate` / `--credits` / `--force`）。
 
-   ```bash
-   export WB2API_HOST=127.0.0.1
-   export WB2API_PORT=7863
-   export WB2API_API_KEY=你的key        # 留空则不带鉴权头
-   export WB2API_CONFIG=/path/to/config.json
-   python deadline_switch.py --simulate   # 先演练，不落盘
-   python deadline_switch.py              # 落地（写回 config + 重启 + 验证）
-   ```
+## 文件
 
-## 配置示例
-
-见 `examples/config.auto.json`：
-
-```json
-{
-  "auto_model": {
-    "enabled": true,
-    "night_primary": "cn:hy4-preview",
-    "day_primary": "cn:hy3",
-    "night_start": 23,
-    "night_end": 8
-  },
-  "model_fallback": {
-    "cn:hy3": ["cn:deepseek-v4.1-flash", "cn:glm-5.3-flash", "cn:hy3-x"],
-    "cn:deepseek-v4.1-flash": ["cn:glm-5.3-flash", "cn:hy3-x"],
-    "cn:glm-5.3-flash": ["cn:hy3-x"],
-    "cn:hy4-preview": ["cn:hy3", "cn:deepseek-v4.1-flash", "cn:glm-5.3-flash", "cn:hy3-x"]
-  }
-}
-```
-
-> 模型名（`cn:*`）取决于你接入的供应商，按需替换。上面的 `day_primary`/`night_primary` 与链顺序
-> 体现的是「免费优先 → 最便宜 → 能力更强 → 兜底」的 C 方案思路（账号额度充裕时，能力优先于省钱）。
-
-## deadline_switch.py
-
-数据驱动：读 `/v1/models` 实时 `credits`，按人工指定顺序（`MANUAL_DAY_CHAIN`）编排日间链，
-**优惠到期后仍便宜的档位不丢**。支持：
-
-- `--simulate`：只打印将写入的配置，不落盘
-- `--credits "cn:deepseek-v4.1-flash=0.17"`：假设某档涨价后的倍率提示
-- `--force <phase>`：强切到指定阶段（`before` / `after0923` / `after0930`）
-
-> **接入远端 NAS**：脚本默认读写本地 `WB2API_CONFIG` 路径、验证走 HTTP 到 `WB2API_HOST`。
-> 若 config.json 在远端，把 `apply_config()` 改成你的 SSH / 部署方式（例如 `ssh nas "cp ..."`）即可。
-
-## 已知坑：GLM-5.3-Flash 空回复
-
-GLM-5.3-Flash 默认 `reasoning_effort=max`，思考 token 计入 `max_tokens` 预算 → 返回 **HTTP 200 但正文为空**，
-且空回复**不触发降级**（会卡住）。
-
-**修法（在 wb2api 转发层，不在本仓库）**：对 `glm-5.3-flash` 注入默认 `reasoning_effort=low`
-（调用方显式指定时不覆盖）。补丁位于 wb2api 侧 `internal/server/handler.go` + `logging.go`。
-本仓库只负责编排，不重复打这个补丁；若用了 GLM，请确认上游已处理，否则它在链里会卡空回复。
+- `deadline_switch.py`：数据驱动的切换脚本（Python 3.8+，仅标准库）
+- `examples/config.auto.json`：配置示例
+- `examples/crontab.example`：定时任务示例
+- 分支 `models-reference`：模型与版本参考清单
 
 ## 许可证
 
