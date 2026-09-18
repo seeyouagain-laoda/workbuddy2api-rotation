@@ -1,0 +1,21 @@
+# wb2api 自动模型轮换 - 定时任务示例
+# =============================================================
+# 把下面的时间换成你的优惠到期日。脚本见仓库根目录 deadline_switch.py。
+# 前置：配置环境变量 WB2API_HOST / WB2API_PORT / WB2API_API_KEY / WB2API_CONFIG
+#       （建议写进一个 .env，再在 cron 里 source 它）
+
+# 例：某档 0.03x 优惠 9/23 截止 —— 9/22 09:00 提醒 + 9/24 00:10 按实时倍率重排日间链
+0 10 22 9 *  echo "DeepSeek 0.03x 优惠今日到期，检查 wb2api 轮换" >> /tmp/wb2api_rotation.log
+10 0 24 9 *  /usr/bin/python3 /path/to/deadline_switch.py >> /tmp/wb2api_rotation.log 2>&1
+
+# 例：免费档 9/30 截止 —— 9/29 09:00 提醒 + 10/1 00:10 切到付费档（Hy3 -> 0.05x 仍在链里）
+0 9 29 9 *   echo "Hy3 免费窗口今日到期，检查 wb2api 轮换" >> /tmp/wb2api_rotation.log
+10 0 1 10 *  /usr/bin/python3 /path/to/deadline_switch.py >> /tmp/wb2api_rotation.log 2>&1
+
+# 每周一 03:00 全量巡检（确认 /v1/models 正常 + 链路可用）
+0 3 * * 1    /usr/bin/python3 /path/to/deadline_switch.py --simulate >> /tmp/wb2api_rotation.log 2>&1
+
+# 说明：
+#  - 直接跑 deadline_switch.py 即按「今天日期对应的阶段」自动编排，无需手动指定档位
+#  - 优惠到期后仍比原价便宜的档位不会被抛弃（脚本读实时 credits，不臆测未来定价）
+#  - 想演练先加 --simulate，确认无误再去掉
