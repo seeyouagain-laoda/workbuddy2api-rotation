@@ -1,0 +1,15 @@
+{
+  "auto_model": {
+    "enabled": true,
+    "night_primary": "cn:hy4-preview",
+    "day_primary": "cn:hy3",
+    "night_start": 23,
+    "night_end": 8
+  },
+  "model_fallback": {
+    "cn:hy3": ["cn:deepseek-v4.1-flash", "cn:glm-5.3-flash", "cn:hy3-x"],
+    "cn:deepseek-v4.1-flash": ["cn:glm-5.3-flash", "cn:hy3-x"],
+    "cn:glm-5.3-flash": ["cn:hy3-x"],
+    "cn:hy4-preview": ["cn:hy3", "cn:deepseek-v4.1-flash", "cn:glm-5.3-flash", "cn:hy3-x"]
+  }
+}
