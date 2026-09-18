@@ -25,7 +25,7 @@ wb2api auto 虚拟模型降级/轮换 配置脚本（通用版）
   python deadline_switch.py --credits "cn:deepseek-v4.1-flash=0.17"  # 假设涨价的演练
   python deadline_switch.py --force after0930  # 强切到指定阶段
 """
-import sys, os, json, datetime, time, tempfile, base64, urllib.request, urllib.error
+import sys, os, json, datetime, time, tempfile, shutil, base64, urllib.request, urllib.error
 
 # ── 配置（全部可经环境变量覆盖）────────────────────────────
 HOST        = os.getenv("WB2API_HOST", "127.0.0.1")
@@ -108,7 +108,16 @@ def suggest_by_credits(credits):
 def desired_auto(phase, credits=None):
     base = {"enabled": True, "night_primary": "cn:hy4-preview",
             "day_primary": "cn:hy3", "night_start": 23, "night_end": 8}
-    base["day_primary"] = build_day_chain(credits)[0]
+    chain = build_day_chain(credits)
+    if not chain:
+        return base
+    # before：免费首档 hy3 作主模型
+    # after0923 / after0930：免费窗口已结束，主模型落到链上下一个仍便宜的档
+    #   （优惠到期≠抛弃，仍比原价便宜就留；按人工 C 方案顺序选下一档）
+    if phase == "before":
+        base["day_primary"] = chain[0]
+    else:
+        base["day_primary"] = chain[1] if len(chain) > 1 else chain[0]
     return base
 
 
@@ -131,11 +140,20 @@ def load_local_config():
 
 
 def apply_config(cfg):
-    """写回本地 config.json。若 config 在远端 NAS，把这里换成你的部署方式。"""
-    fd, lp = tempfile.mkstemp(suffix=".json")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-    os.replace(lp, CONFIG_PATH)   # 原子替换
+    """写回本地 config.json。若 config 在远端 NAS，把这里换成你的部署方式。
+    临时文件放在 config 同目录，避免跨设备 rename（os.replace 在 /tmp→/vol 会 Invalid cross-device link）。"""
+    d = os.path.dirname(CONFIG_PATH) or "."
+    fd, lp = tempfile.mkstemp(suffix=".json", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        shutil.move(lp, CONFIG_PATH)   # 跨设备安全
+    except Exception:
+        try:
+            os.remove(lp)
+        except OSError:
+            pass
+        raise
 
 
 # ── 验证 ──────────────────────────────────────────────────
